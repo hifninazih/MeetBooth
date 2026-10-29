@@ -11,80 +11,51 @@ import {
   Globe,
 } from 'lucide-react';
 
+function generateRandomCode(): string {
+  const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const numbers = '23456789';
+  let res = '';
+  for (let i = 0; i < 3; i++) res += letters.charAt(Math.floor(Math.random() * letters.length));
+  for (let i = 0; i < 3; i++) res += numbers.charAt(Math.floor(Math.random() * numbers.length));
+  return res;
+}
+
 export default function RoomLobbyPage() {
   const router = useRouter();
   const [userName, setUserName] = useState<string>('');
   const [roomCodeInput, setRoomCodeInput] = useState<string>('');
-  const [isCreating, setIsCreating] = useState<boolean>(false);
-  const [isJoining, setIsJoining] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Handle Create Room
-  const handleCreateRoom = async () => {
+  const handleCreateRoom = () => {
     const name = userName.trim() || 'Saya';
-    setIsCreating(true);
     setErrorMessage(null);
 
-    try {
-      const res = await fetch('/api/rooms', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hostName: name }),
-      });
+    const code = generateRandomCode(); // e.g. "LDR892"
 
-      const data = await res.json();
-      if (!data.success) {
-        throw new Error(data.error || 'Gagal membuat room');
-      }
+    sessionStorage.setItem('duo_participant_name', name);
+    sessionStorage.setItem('duo_role', 'host');
 
-      sessionStorage.setItem('duo_participant_id', data.participantId);
-      sessionStorage.setItem('duo_participant_name', name);
-      sessionStorage.setItem('duo_role', 'host');
-
-      router.push(`/room/${data.room.id}`);
-    } catch (err: unknown) {
-      console.error(err);
-      setErrorMessage(err instanceof Error ? err.message : 'Terjadi kesalahan');
-    } finally {
-      setIsCreating(false);
-    }
+    router.push(`/room/${code}`);
   };
 
   // Handle Join Room
-  const handleJoinRoom = async () => {
-    const code = roomCodeInput.trim().toUpperCase();
-    if (!code) {
-      setErrorMessage('Silakan masukkan Kode Room');
+  const handleJoinRoom = () => {
+    const raw = roomCodeInput.trim().toUpperCase();
+    const cleanCode = raw.replace(/[^a-zA-Z0-9]/g, '');
+
+    if (!cleanCode) {
+      setErrorMessage('Silakan masukkan Kode Room yang valid.');
       return;
     }
 
     const name = userName.trim() || 'Teman';
-    setIsJoining(true);
     setErrorMessage(null);
 
-    try {
-      const res = await fetch(`/api/rooms/${code}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'join', guestName: name }),
-      });
+    sessionStorage.setItem('duo_participant_name', name);
+    sessionStorage.setItem('duo_role', 'guest');
 
-      const data = await res.json();
-      if (!data.success) {
-        throw new Error(data.error || 'Room tidak ditemukan atau sudah penuh.');
-      }
-
-      sessionStorage.setItem('duo_participant_id', data.participantId);
-      sessionStorage.setItem('duo_participant_name', name);
-      sessionStorage.setItem('duo_role', 'guest');
-
-      router.push(`/room/${data.room.id}`);
-    } catch (err: unknown) {
-      console.error(err);
-      setErrorMessage(err instanceof Error ? err.message : 'Gagal bergabung');
-    } finally {
-      setIsJoining(false);
-    }
+    router.push(`/room/${cleanCode}`);
   };
 
   return (
@@ -152,10 +123,9 @@ export default function RoomLobbyPage() {
 
               <button
                 onClick={handleCreateRoom}
-                disabled={isCreating}
-                className="mt-5 flex items-center justify-center gap-2 rounded-xl bg-rose-500 py-3 px-4 text-xs font-bold text-white shadow-md shadow-rose-500/20 hover:bg-rose-600 transition disabled:opacity-50"
+                className="mt-5 flex items-center justify-center gap-2 rounded-xl bg-rose-500 py-3 px-4 text-xs font-bold text-white shadow-md shadow-rose-500/20 hover:bg-rose-600 transition"
               >
-                <span>{isCreating ? 'Membuat Room...' : 'Bikin Room Sekarang'}</span>
+                <span>Bikin Room Sekarang</span>
                 <ArrowRight className="h-3.5 w-3.5" />
               </button>
             </div>
@@ -178,17 +148,16 @@ export default function RoomLobbyPage() {
                 <input
                   type="text"
                   value={roomCodeInput}
-                  maxLength={10}
+                  maxLength={12}
                   onChange={(e) => setRoomCodeInput(e.target.value)}
-                  placeholder="Kode (cth: LDR-892)"
+                  placeholder="Kode (cth: LDR892)"
                   className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs font-mono uppercase text-center focus:border-rose-500 focus:outline-none dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
                 />
                 <button
                   onClick={handleJoinRoom}
-                  disabled={isJoining}
-                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-zinc-900 py-2.5 px-4 text-xs font-bold text-white hover:bg-zinc-800 transition dark:bg-zinc-100 dark:text-zinc-900 disabled:opacity-50"
+                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-zinc-900 py-2.5 px-4 text-xs font-bold text-white hover:bg-zinc-800 transition dark:bg-zinc-100 dark:text-zinc-900"
                 >
-                  <span>{isJoining ? 'Menghubungkan...' : 'Gabung Room'}</span>
+                  <span>Gabung Room</span>
                 </button>
               </div>
             </div>

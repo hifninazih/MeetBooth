@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, use, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
-import { useWebRTCRoom } from '@/hooks/useWebRTCRoom';
+import { usePeerJSRoom } from '@/hooks/usePeerJSRoom';
 import { useAudioEffects } from '@/hooks/useAudioEffects';
 import { usePhotoboothStore } from '@/hooks/usePhotoboothStore';
 import { captureDuoPhoto } from '@/lib/duoComposite';
@@ -23,6 +23,8 @@ import {
   Layers,
   ArrowRight,
   RotateCcw,
+  AlertCircle,
+  RefreshCw,
 } from 'lucide-react';
 
 function DuoBoothRoomContent({
@@ -33,11 +35,6 @@ function DuoBoothRoomContent({
   const router = useRouter();
   const resolvedParams = use(params);
   const roomId = resolvedParams.id;
-
-  const [participantId, setParticipantId] = useState<string>(() => {
-    if (typeof window === 'undefined') return '';
-    return sessionStorage.getItem('duo_participant_id') || '';
-  });
 
   const [participantName, setParticipantName] = useState<string>(() => {
     if (typeof window === 'undefined') return '';
@@ -51,20 +48,17 @@ function DuoBoothRoomContent({
 
   const [hasJoined, setHasJoined] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
-    return !!(
-      sessionStorage.getItem('duo_participant_id') &&
-      sessionStorage.getItem('duo_participant_name')
-    );
+    return !!sessionStorage.getItem('duo_participant_name');
   });
 
   const [nameInput, setNameInput] = useState<string>('');
-  const [isJoiningDirect, setIsJoiningDirect] = useState<boolean>(false);
+  const [selectedRole, setSelectedRole] = useState<'guest' | 'host'>('guest');
 
   // Video element refs
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
 
-  // Booth settings & state
+  // Booth store & state
   const { photos, resetPhotos, addPhoto, updateSettings } = usePhotoboothStore();
   const [isLocalMirrored, setIsLocalMirrored] = useState<boolean>(true);
   const [isRemoteMirrored] = useState<boolean>(true);
@@ -80,12 +74,14 @@ function DuoBoothRoomContent({
 
   const { playBeep, playShutter, playSuccess } = useAudioEffects(soundEnabled);
 
-  // WebRTC Hook
+  // PeerJS WebRTC P2P Hook (100% Serverless, zero DB required, works on Vercel)
   const {
     localStream,
     remoteStream,
-    friendParticipant,
+    friendName,
+    connectionStatus,
     isGuestJoined,
+    errorMessage,
     isMicMuted,
     isCameraOff,
     toggleMic,
@@ -96,20 +92,20 @@ function DuoBoothRoomContent({
     setOnCountdownReceived,
     setOnPhotoSynced,
     setOnFinishSession,
-  } = useWebRTCRoom({
-    roomId,
-    participantId,
-    participantName,
-    role,
+  } = usePeerJSRoom({
+    roomCode: roomId,
+    participantName: participantName || 'Teman',
+    role: hasJoined ? role : 'guest',
   });
 
-  // Attach media streams to video elements
+  // Attach local media stream
   useEffect(() => {
     if (localVideoRef.current && localStream) {
       localVideoRef.current.srcObject = localStream;
     }
   }, [localStream]);
 
+  // Attach remote media stream
   useEffect(() => {
     if (remoteVideoRef.current && remoteStream) {
       remoteVideoRef.current.srcObject = remoteStream;
@@ -149,7 +145,7 @@ function DuoBoothRoomContent({
         isRemoteMirrored,
         style: 'side-by-side',
         localName: participantName,
-        remoteName: friendParticipant?.name || 'Teman',
+        remoteName: friendName || 'Teman',
       });
 
       if (duoPhoto) {
@@ -164,7 +160,7 @@ function DuoBoothRoomContent({
       isLocalMirrored,
       isRemoteMirrored,
       participantName,
-      friendParticipant,
+      friendName,
       playBeep,
       playShutter,
       triggerFlash,
@@ -196,9 +192,7 @@ function DuoBoothRoomContent({
 
     // Save duo settings
     updateSettings({
-      title: `${participantName.toUpperCase()} & ${
-        (friendParticipant?.name || 'BESTIE').toUpperCase()
-      }`,
+      title: `${participantName.toUpperCase()} & ${(friendName || 'BESTIE').toUpperCase()}`,
     });
 
     router.push('/result');
@@ -207,7 +201,7 @@ function DuoBoothRoomContent({
     shotCount,
     timerDuration,
     participantName,
-    friendParticipant,
+    friendName,
     resetPhotos,
     triggerRemoteCountdown,
     executeCountdownAndSnap,
@@ -232,9 +226,7 @@ function DuoBoothRoomContent({
     setOnFinishSession(() => {
       playSuccess();
       updateSettings({
-        title: `${participantName.toUpperCase()} & ${
-          (friendParticipant?.name || 'BESTIE').toUpperCase()
-        }`,
+        title: `${participantName.toUpperCase()} & ${(friendName || 'BESTIE').toUpperCase()}`,
       });
       router.push('/result');
     });
@@ -247,41 +239,20 @@ function DuoBoothRoomContent({
     addPhoto,
     playSuccess,
     participantName,
-    friendParticipant,
+    friendName,
     updateSettings,
     router,
   ]);
 
   // Direct Join Prompt if opening shared link
-  const handleDirectJoin = async () => {
+  const handleDirectJoin = () => {
     const name = nameInput.trim() || 'Teman';
-    setIsJoiningDirect(true);
+    sessionStorage.setItem('duo_participant_name', name);
+    sessionStorage.setItem('duo_role', selectedRole);
 
-    try {
-      const res = await fetch(`/api/rooms/${roomId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'join', guestName: name }),
-      });
-
-      const data = await res.json();
-      if (!data.success) {
-        throw new Error(data.error || 'Gagal masuk ke room');
-      }
-
-      sessionStorage.setItem('duo_participant_id', data.participantId);
-      sessionStorage.setItem('duo_participant_name', name);
-      sessionStorage.setItem('duo_role', 'guest');
-
-      setParticipantId(data.participantId);
-      setParticipantName(name);
-      setRole('guest');
-      setHasJoined(true);
-    } catch (e) {
-      alert(e instanceof Error ? e.message : 'Gagal bergabung');
-    } finally {
-      setIsJoiningDirect(false);
-    }
+    setParticipantName(name);
+    setRole(selectedRole);
+    setHasJoined(true);
   };
 
   // Copy shareable link
@@ -303,28 +274,59 @@ function DuoBoothRoomContent({
           </div>
           <h2 className="text-2xl font-black">Undangan Photobooth Berdua!</h2>
           <p className="mt-2 text-xs text-zinc-400">
-            Temanmu mengundangmu untuk foto bareng dari jarak jauh di room ini.
+            Room: <strong className="text-white font-mono">{roomId}</strong>
           </p>
 
-          <div className="mt-6 text-left">
-            <label className="text-xs font-bold uppercase tracking-wider text-zinc-400 block mb-2">
-              Nama Kamu
-            </label>
-            <input
-              type="text"
-              value={nameInput}
-              onChange={(e) => setNameInput(e.target.value)}
-              placeholder="Ketik namamu..."
-              className="w-full rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-sm focus:border-rose-500 focus:outline-none"
-            />
+          <div className="mt-6 text-left space-y-4">
+            <div>
+              <label className="text-xs font-bold uppercase tracking-wider text-zinc-400 block mb-2">
+                Nama Kamu
+              </label>
+              <input
+                type="text"
+                value={nameInput}
+                onChange={(e) => setNameInput(e.target.value)}
+                placeholder="Ketik namamu..."
+                className="w-full rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-sm focus:border-rose-500 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-bold uppercase tracking-wider text-zinc-400 block mb-2">
+                Peran Kamu
+              </label>
+              <div className="grid grid-cols-2 gap-2 text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setSelectedRole('guest')}
+                  className={`p-2.5 rounded-xl border transition ${
+                    selectedRole === 'guest'
+                      ? 'border-rose-500 bg-rose-950/40 text-rose-300'
+                      : 'border-zinc-700 bg-zinc-800 text-zinc-400'
+                  }`}
+                >
+                  Teman yang Diundang
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedRole('host')}
+                  className={`p-2.5 rounded-xl border transition ${
+                    selectedRole === 'host'
+                      ? 'border-rose-500 bg-rose-950/40 text-rose-300'
+                      : 'border-zinc-700 bg-zinc-800 text-zinc-400'
+                  }`}
+                >
+                  Saya Pembuat Room
+                </button>
+              </div>
+            </div>
           </div>
 
           <button
             onClick={handleDirectJoin}
-            disabled={isJoiningDirect}
             className="mt-6 w-full flex items-center justify-center gap-2 rounded-xl bg-rose-500 py-3.5 text-sm font-bold text-white shadow-lg shadow-rose-500/25 hover:bg-rose-600 transition"
           >
-            <span>{isJoiningDirect ? 'Menghubungkan...' : 'Gabung ke Photobooth'}</span>
+            <span>Masuk ke Photobooth</span>
             <ArrowRight className="h-4 w-4" />
           </button>
         </div>
@@ -342,7 +344,7 @@ function DuoBoothRoomContent({
             <div className="flex items-center gap-2.5">
               <span className="flex items-center gap-1.5 rounded-full bg-rose-500/20 border border-rose-500/30 px-3 py-0.5 text-xs font-bold text-rose-400">
                 <Heart className="h-3 w-3 fill-current" />
-                Duo Online Room
+                Duo Online Room ({role === 'host' ? 'Host' : 'Tamu'})
               </span>
               <span className="text-xs font-mono text-zinc-400">
                 Kode: <strong className="text-white">{roomId}</strong>
@@ -350,7 +352,7 @@ function DuoBoothRoomContent({
             </div>
             <p className="text-xs text-zinc-400 mt-1">
               {isGuestJoined
-                ? `Terhubung dengan ${friendParticipant?.name} ✨`
+                ? `Terhubung dengan ${friendName || 'Teman'} ✨`
                 : 'Menunggu teman bergabung... Bagikan link di samping!'}
             </p>
           </div>
@@ -402,6 +404,23 @@ function DuoBoothRoomContent({
           </div>
         </div>
 
+        {/* Error notification banner if any */}
+        {errorMessage && (
+          <div className="mb-6 rounded-2xl bg-amber-500/10 border border-amber-500/30 p-4 text-xs text-amber-300 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0 text-amber-400" />
+              <span>{errorMessage}</span>
+            </div>
+            <button
+              onClick={() => window.location.reload()}
+              className="flex items-center gap-1 rounded-lg bg-amber-500/20 px-2.5 py-1 text-[11px] font-bold text-amber-200 hover:bg-amber-500/30"
+            >
+              <RefreshCw className="h-3 w-3" />
+              Muat Ulang
+            </button>
+          </div>
+        )}
+
         {/* Dual Video Screen & Studio */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           
@@ -444,22 +463,26 @@ function DuoBoothRoomContent({
                       <div className="h-12 w-12 rounded-full bg-rose-500/20 text-rose-400 flex items-center justify-center mb-2 animate-pulse">
                         <Users className="h-6 w-6" />
                       </div>
-                      <p className="text-xs font-bold text-zinc-300">Menunggu Teman...</p>
-                      <p className="text-[10px] text-zinc-500 mt-1 max-w-[160px]">
-                        Kirimkan link room agar temanmu langsung masuk ke sini.
+                      <p className="text-xs font-bold text-zinc-300">
+                        {connectionStatus === 'connecting'
+                          ? 'Menghubungkan ke teman...'
+                          : 'Menunggu Teman Bergabung...'}
+                      </p>
+                      <p className="text-[10px] text-zinc-500 mt-1 max-w-[170px]">
+                        Kirim link ke teman agar kamera langsung menyatu di sini.
                       </p>
                       <button
                         onClick={handleCopyLink}
-                        className="mt-3 rounded-full bg-rose-500 px-3 py-1 text-[11px] font-semibold text-white shadow"
+                        className="mt-3 rounded-full bg-rose-500 px-3.5 py-1 text-[11px] font-semibold text-white shadow hover:bg-rose-600"
                       >
-                        Salin Link
+                        Salin Link Room
                       </button>
                     </div>
                   )}
 
-                  {friendParticipant && (
+                  {friendName && (
                     <div className="absolute bottom-3 right-3 z-10 rounded-full bg-black/60 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur-md">
-                      {friendParticipant.name}
+                      {friendName}
                     </div>
                   )}
                 </div>
